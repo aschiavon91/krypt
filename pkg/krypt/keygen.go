@@ -1,0 +1,16 @@
+package krypt
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+)
+
+// GenerateKey generates a new random 32-byte key, returned as hex string.
+func GenerateKey() (string, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", fmt.Errorf("generate key: %w", err)
+	}
+	return hex.EncodeToString(key), nil
+}
