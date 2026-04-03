@@ -1,6 +1,6 @@
 # krypt
 
-Encrypted `.env` credential manager for Go. Inspired by Rails credentials.
+Encrypted `.env` credential manager. Inspired by Rails credentials.
 
 Encrypt your secrets with AES-256-GCM, commit `.env.enc` files to version control, and decrypt them at runtime. Works as a CLI tool and as a Go package.
 
@@ -13,9 +13,9 @@ go install github.com/aschiavon91/krypt/cmd/krypt@latest
 ## Quick Start
 
 ```bash
-# Generate an encryption key
-export KRYPT_KEY=$(krypt keygen)
-echo $KRYPT_KEY  # save this somewhere safe
+# Generate an encryption key and save to a file
+krypt keygen > .krypt-key
+chmod 600 .krypt-key
 
 # Create your secrets file
 cat > .env <<EOF
@@ -25,22 +25,32 @@ REDIS_URL=redis://localhost:6379
 EOF
 
 # Encrypt it
-krypt encrypt
+krypt encrypt --key-file .krypt-key
 # -> creates .env.enc (add this to git)
-# -> keep .env in .gitignore
+# -> add .env and .krypt-key to .gitignore
 
 # Decrypt to stdout
-krypt decrypt
+krypt decrypt --key-file .krypt-key
 
 # Run a command with secrets injected
-krypt run -- go run ./cmd/server
+krypt run --key-file .krypt-key -- go run ./cmd/server
 
 # Edit secrets in your $EDITOR
-krypt edit
+krypt edit --key-file .krypt-key
 
 # Set/get individual keys
-krypt set "STRIPE_KEY=sk_live_new"
-krypt get STRIPE_KEY
+krypt set "STRIPE_KEY=sk_live_new" --key-file .krypt-key
+krypt get STRIPE_KEY --key-file .krypt-key
+```
+
+For convenience in a shell session, export the key as an env var instead of passing `--key-file` every time:
+
+```bash
+export KRYPT_KEY=$(cat .krypt-key)
+
+krypt encrypt
+krypt decrypt
+krypt run -- go run ./cmd/server
 ```
 
 ## Multiple Environments
@@ -49,28 +59,36 @@ krypt supports named environments with separate keys:
 
 ```bash
 # File naming convention:
-#   .env.enc       -> KRYPT_KEY
-#   .env.dev.enc   -> KRYPT_KEY_DEV
+#   .env.enc         -> KRYPT_KEY
+#   .env.dev.enc     -> KRYPT_KEY_DEV
 #   .env.staging.enc -> KRYPT_KEY_STAGING
 
 # Generate a key for dev
-export KRYPT_KEY_DEV=$(krypt keygen)
+krypt keygen > .krypt-key-dev
 
 # Encrypt dev secrets
-krypt encrypt dev
+krypt encrypt dev --key-file .krypt-key-dev
 
 # Decrypt dev secrets
-krypt decrypt dev
+krypt decrypt dev --key-file .krypt-key-dev
 
 # Run with dev secrets
-krypt run dev -- go run ./cmd/server
+krypt run dev --key-file .krypt-key-dev -- go run ./cmd/server
 
 # Edit dev secrets
-krypt edit dev
+krypt edit dev --key-file .krypt-key-dev
 
 # Set/get in dev
-krypt set "DEBUG=true" dev
-krypt get DEBUG dev
+krypt set "DEBUG=true" dev --key-file .krypt-key-dev
+krypt get DEBUG dev --key-file .krypt-key-dev
+```
+
+Or with env vars:
+
+```bash
+export KRYPT_KEY_DEV=$(cat .krypt-key-dev)
+
+krypt run dev -- go run ./cmd/server
 ```
 
 ## CLI Reference
@@ -82,11 +100,14 @@ Generate a new 32-byte encryption key (64 hex characters).
 ```bash
 krypt keygen
 # a1b2c3d4e5f6...
+
+# Save to a file (recommended)
+krypt keygen > .krypt-key
 ```
 
 ### `krypt encrypt [env]`
 
-Encrypt a plaintext `.env` file into `.env.enc`.
+Encrypt a plaintext `.env` file into `.env.enc`. The write is atomic (temp file + rename) to prevent data loss.
 
 ```bash
 krypt encrypt           # .env -> .env.enc
@@ -106,7 +127,7 @@ krypt decrypt dev | grep DATABASE
 
 Open decrypted secrets in `$VISUAL` or `$EDITOR` (falls back to `vi`). Re-encrypts on save. If the editor exits non-zero, changes are discarded.
 
-The temp file is created in `/dev/shm` (Linux) when available for in-memory storage, otherwise `/tmp`, with `0600` permissions.
+The temp file is created in `/dev/shm` (Linux) when available for in-memory storage, otherwise `/tmp`. The file is created with a restrictive umask (`0177`) so it is never readable by other users, and cleaned up immediately after the editor exits.
 
 ```bash
 krypt edit
@@ -116,6 +137,8 @@ krypt edit staging
 ### `krypt run [env] -- <command> [args...]`
 
 Decrypt secrets and inject them into the environment of a subprocess. Secrets override existing env vars with the same name. The exit code of the child process is passed through.
+
+For security, `KRYPT_KEY` and `KRYPT_KEY_*` env vars are **stripped** from the child process environment -- the subprocess only sees the decrypted secrets, never the master encryption key.
 
 ```bash
 krypt run -- go run ./cmd/server
@@ -145,16 +168,18 @@ krypt get DEBUG dev
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--key` | `-k` | Provide encryption key directly |
+| `--key-file` | | Read encryption key from a file (recommended) |
+| `--key` | `-k` | Provide encryption key directly (caution: visible in `ps` and shell history) |
 | `--file` | `-f` | Override encrypted file path |
 | `--source` | | Override source `.env` file path (encrypt only) |
 
 ### Key Resolution Order
 
-1. `--key` flag
-2. `KRYPT_KEY_<ENV>` environment variable (if env specified)
-3. `KRYPT_KEY` environment variable
-4. Error with helpful message
+1. `--key` flag (direct value)
+2. `--key-file` flag (read from file)
+3. `KRYPT_KEY_<ENV>` environment variable (if env specified)
+4. `KRYPT_KEY` environment variable
+5. Error with helpful message
 
 ## Using as a Go Package
 
@@ -260,11 +285,15 @@ Parser rules:
 
 ## Security
 
-- AES-256-GCM encryption (Go stdlib `crypto/aes` + `crypto/cipher`)
-- Keys are 32 bytes generated from `crypto/rand`
-- Fresh random nonce on every encrypt operation
-- Temp files during `edit` use `/dev/shm` (Linux) with `0600` permissions
-- Temp files are cleaned up even on panic (deferred removal)
+- **AES-256-GCM** encryption via Go stdlib (`crypto/aes` + `crypto/cipher`)
+- **32-byte keys** generated from `crypto/rand`
+- **Fresh random nonce** on every encrypt operation
+- **Atomic writes** -- encrypted files are written to a temp file and renamed, preventing corruption on interrupted writes
+- **Restrictive file permissions** -- encrypted files are written `0600`, temp files created with umask `0177`
+- **In-memory temp files** -- `krypt edit` uses `/dev/shm` on Linux to avoid writing plaintext to disk
+- **Temp file cleanup** -- deferred removal runs even on panic
+- **Key isolation** -- `krypt run` strips `KRYPT_KEY*` env vars from the child process so subprocesses never see the master key
+- **`--key-file` flag** -- preferred over `--key` to avoid exposing the key in process listings and shell history
 
 ## License
 
