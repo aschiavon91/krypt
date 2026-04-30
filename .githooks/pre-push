@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if ! command -v golangci-lint > /dev/null 2>&1; then
+  echo "golangci-lint not found. Install it: https://golangci-lint.run/usage/install/"
+  echo "Or run: make setup-tools"
+  exit 1
+fi
+
+echo "Running golangci-lint..."
+golangci-lint run ./...

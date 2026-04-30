@@ -16,10 +16,30 @@ clean:
 
 ## test: Run all tests
 test:
-	go test ./...
+	go test -race -shuffle=on ./...
 
 ## fmt: Format all Go files
 fmt:
-	go fmt ./...
+	golangci-lint fmt ./...
 
-.PHONY: build run clean test fmt
+## lint: Run linter
+lint:
+	golangci-lint run ./...
+
+## lint-fix: Run linter and auto-fix issues
+lint-fix:
+	golangci-lint run --fix ./...
+
+## setup: Install git hooks and tools
+setup: setup-hooks setup-tools
+
+## setup-hooks: Configure git to use .githooks/
+setup-hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks configured."
+
+## setup-tools: Install development tools
+setup-tools:
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+.PHONY: build run clean test fmt lint lint-fix setup setup-hooks setup-tools
