@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -18,25 +19,12 @@ func newRunCmd() *cobra.Command {
 		Use:   "run [env] -- <command> [args...]",
 		Short: "Run a command with decrypted secrets in env",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dashIdx := cmd.ArgsLenAtDash()
-
-			var env string
-			var cmdArgs []string
-
-			if dashIdx < 0 {
-				// No --, treat all args as command (no env)
-				cmdArgs = args
-			} else if dashIdx == 0 {
-				cmdArgs = args
-			} else if dashIdx == 1 {
-				env = args[0]
-				cmdArgs = args[1:]
-			} else {
-				return fmt.Errorf("too many arguments before --: expected [env] -- <command>")
+			env, cmdArgs, err := parseRunArgs(cmd.ArgsLenAtDash(), args)
+			if err != nil {
+				return err
 			}
-
 			if len(cmdArgs) == 0 {
-				return fmt.Errorf("missing command: usage: krypt run [env] -- <command> [args...]")
+				return errors.New("missing command: usage: krypt run [env] -- <command> [args...]")
 			}
 
 			key, err := resolveKey(cmd, env)
@@ -50,30 +38,8 @@ func newRunCmd() *cobra.Command {
 				return err
 			}
 
-			// Build env map from current env, then overlay secrets
-			envMap := make(map[string]string)
-			for _, e := range os.Environ() {
-				if before, after, ok := strings.Cut(e, "="); ok {
-					envMap[before] = after
-				}
-			}
-			maps.Copy(envMap, secrets)
-
-			// Strip encryption keys from child environment — the child
-			// should only see the decrypted secrets, not the master key.
-			for k := range envMap {
-				if k == "KRYPT_KEY" || strings.HasPrefix(k, "KRYPT_KEY_") {
-					delete(envMap, k)
-				}
-			}
-
-			environ := make([]string, 0, len(envMap))
-			for k, v := range envMap {
-				environ = append(environ, k+"="+v)
-			}
-
-			child := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-			child.Env = environ
+			child := exec.Command(cmdArgs[0], cmdArgs[1:]...) //nolint:gosec // user-provided command, by design
+			child.Env = buildChildEnv(secrets)
 			child.Stdin = os.Stdin
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
@@ -87,7 +53,7 @@ func newRunCmd() *cobra.Command {
 
 			go func() {
 				for sig := range sigCh {
-					child.Process.Signal(sig)
+					_ = child.Process.Signal(sig)
 				}
 			}()
 
@@ -96,7 +62,8 @@ func newRunCmd() *cobra.Command {
 			close(sigCh)
 
 			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
 					os.Exit(exitErr.ExitCode())
 				}
 				return err
@@ -105,4 +72,38 @@ func newRunCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func parseRunArgs(dashIdx int, args []string) (env string, cmdArgs []string, err error) {
+	switch {
+	case dashIdx < 0, dashIdx == 0:
+		cmdArgs = args
+	case dashIdx == 1:
+		env, cmdArgs = args[0], args[1:]
+	default:
+		err = errors.New("too many arguments before --: expected [env] -- <command>")
+	}
+	return env, cmdArgs, err
+}
+
+func buildChildEnv(secrets map[string]string) []string {
+	envMap := make(map[string]string, len(os.Environ()))
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envMap[k] = v
+		}
+	}
+	maps.Copy(envMap, secrets)
+
+	for k := range envMap {
+		if k == "KRYPT_KEY" || strings.HasPrefix(k, "KRYPT_KEY_") {
+			delete(envMap, k)
+		}
+	}
+
+	environ := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		environ = append(environ, k+"="+v)
+	}
+	return environ
 }

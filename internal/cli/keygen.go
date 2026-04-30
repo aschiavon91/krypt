@@ -12,13 +12,13 @@ func newKeygenCmd() *cobra.Command {
 		Use:   "keygen",
 		Short: "Generate a new encryption key",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			key, err := krypt.GenerateKey()
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), key)
-			return nil
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), key)
+			return err
 		},
 	}
 }

@@ -1,3 +1,4 @@
+// Package cli provides integration tests for the krypt CLI commands.
 package cli
 
 import (
@@ -12,16 +13,16 @@ import (
 	"github.com/aschiavon91/krypt/pkg/krypt"
 )
 
-func testSetup(t *testing.T) (key []byte, hexKey string, dir string) {
+func testSetup(t *testing.T) (key []byte, hexKey, dir string) {
 	t.Helper()
 	key = make([]byte, 32)
 	rand.Read(key)
 	hexKey = hex.EncodeToString(key)
 	dir = t.TempDir()
-	return
+	return key, hexKey, dir
 }
 
-func execCmd(t *testing.T, args ...string) (stdout string, stderr string, err error) {
+func execCmd(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	cmd := NewRootCmd()
 	outBuf := new(bytes.Buffer)
@@ -48,24 +49,22 @@ func TestKeygenCommand(t *testing.T) {
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
-	// Create a plain .env file
 	envFile := filepath.Join(dir, ".env")
-	os.WriteFile(envFile, []byte("SECRET=mysecret\nDB=postgres\n"), 0o644)
+	if err := os.WriteFile(envFile, []byte("SECRET=mysecret\nDB=postgres\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	encFile := filepath.Join(dir, ".env.enc")
 
-	// Encrypt
 	_, _, err := execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
 
-	// Verify encrypted file exists
 	if _, err := os.Stat(encFile); err != nil {
 		t.Fatalf("encrypted file not created: %v", err)
 	}
 
-	// Decrypt via library to verify content
 	got, err := krypt.Decrypt(encFile, key)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
@@ -74,7 +73,6 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 		t.Errorf("content mismatch: %q", got)
 	}
 
-	// Decrypt via CLI
 	stdout, _, err := execCmd(t, "decrypt", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
@@ -107,13 +105,15 @@ func TestDecryptMissingFile(t *testing.T) {
 func TestDecryptInvalidKey(t *testing.T) {
 	_, hexKey, dir := testSetup(t)
 
-	// Create encrypted file
 	envFile := filepath.Join(dir, ".env")
-	os.WriteFile(envFile, []byte("SECRET=val\n"), 0o644)
+	if err := os.WriteFile(envFile, []byte("SECRET=val\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	encFile := filepath.Join(dir, ".env.enc")
-	execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile)
+	if _, _, err := execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile); err != nil {
+		t.Fatal(err)
+	}
 
-	// Try to decrypt with wrong key
 	wrongKey := make([]byte, 32)
 	rand.Read(wrongKey)
 	wrongHex := hex.EncodeToString(wrongKey)
@@ -129,13 +129,14 @@ func TestKeyResolutionFromEnv(t *testing.T) {
 	_ = key
 
 	envFile := filepath.Join(dir, ".env")
-	os.WriteFile(envFile, []byte("VAL=fromenv\n"), 0o644)
+	if err := os.WriteFile(envFile, []byte("VAL=fromenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	encFile := filepath.Join(dir, ".env.enc")
+	if _, _, err := execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile); err != nil {
+		t.Fatal(err)
+	}
 
-	// Encrypt with --key flag
-	execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile)
-
-	// Decrypt using KRYPT_KEY env var
 	t.Setenv("KRYPT_KEY", hexKey)
 	stdout, _, err := execCmd(t, "decrypt", "--file", encFile)
 	if err != nil {
@@ -150,12 +151,14 @@ func TestKeyResolutionFromEnvNamed(t *testing.T) {
 	_, hexKey, dir := testSetup(t)
 
 	envFile := filepath.Join(dir, ".env.dev")
-	os.WriteFile(envFile, []byte("DEV=true\n"), 0o644)
+	if err := os.WriteFile(envFile, []byte("DEV=true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	encFile := filepath.Join(dir, ".env.dev.enc")
+	if _, _, err := execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile); err != nil {
+		t.Fatal(err)
+	}
 
-	execCmd(t, "encrypt", "--key", hexKey, "--file", encFile, "--source", envFile)
-
-	// Should resolve KRYPT_KEY_DEV
 	t.Setenv("KRYPT_KEY_DEV", hexKey)
 	stdout, _, err := execCmd(t, "decrypt", "dev", "--file", encFile)
 	if err != nil {
@@ -171,18 +174,17 @@ func TestEditCommand(t *testing.T) {
 
 	encFile := filepath.Join(dir, ".env.enc")
 
-	// Create a mock editor that writes content
 	mockEditor := filepath.Join(dir, "mock-editor.sh")
-	os.WriteFile(mockEditor, []byte("#!/bin/sh\necho 'EDITED_KEY=edited_value' > \"$1\"\n"), 0o755)
+	if err := os.WriteFile(mockEditor, []byte("#!/bin/sh\necho 'EDITED_KEY=edited_value' > \"$1\"\n"), 0o755); err != nil { //nolint:gosec // mock editor script requires executable permissions
+		t.Fatal(err)
+	}
 	t.Setenv("VISUAL", mockEditor)
 
-	// Edit a new file (no existing .enc file)
 	_, _, err := execCmd(t, "edit", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 
-	// Verify the encrypted file was created with the edited content
 	stdout, _, err := execCmd(t, "decrypt", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("decrypt after edit: %v", err)
@@ -195,13 +197,15 @@ func TestEditCommand(t *testing.T) {
 func TestEditExistingFile(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
-	// Create an existing encrypted file
 	encFile := filepath.Join(dir, ".env.enc")
-	krypt.Encrypt([]byte("OLD=value\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("OLD=value\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
-	// Mock editor appends a line
 	mockEditor := filepath.Join(dir, "mock-editor.sh")
-	os.WriteFile(mockEditor, []byte("#!/bin/sh\necho 'NEW=appended' >> \"$1\"\n"), 0o755)
+	if err := os.WriteFile(mockEditor, []byte("#!/bin/sh\necho 'NEW=appended' >> \"$1\"\n"), 0o755); err != nil { //nolint:gosec // mock editor script requires executable permissions
+		t.Fatal(err)
+	}
 	t.Setenv("VISUAL", mockEditor)
 
 	_, _, err := execCmd(t, "edit", "--key", hexKey, "--file", encFile)
@@ -220,7 +224,9 @@ func TestRunMissingCommand(t *testing.T) {
 
 	encFile := filepath.Join(dir, ".env.enc")
 	key, _ := hex.DecodeString(hexKey)
-	krypt.Encrypt([]byte("K=V\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("K=V\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := execCmd(t, "run", "--key", hexKey, "--file", encFile, "--")
 	if err == nil {
@@ -231,17 +237,16 @@ func TestRunMissingCommand(t *testing.T) {
 func TestSetGetRoundTrip(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
-	// Create an initial encrypted file
 	encFile := filepath.Join(dir, ".env.enc")
-	krypt.Encrypt([]byte("EXISTING=keep\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("EXISTING=keep\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
-	// Set a new key
 	_, _, err := execCmd(t, "set", "NEW_KEY=new_value", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
-	// Get the new key
 	stdout, _, err := execCmd(t, "get", "NEW_KEY", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("get NEW_KEY: %v", err)
@@ -250,7 +255,6 @@ func TestSetGetRoundTrip(t *testing.T) {
 		t.Errorf("NEW_KEY = %q, want %q", strings.TrimSpace(stdout), "new_value")
 	}
 
-	// Verify existing key is preserved
 	stdout, _, err = execCmd(t, "get", "EXISTING", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("get EXISTING: %v", err)
@@ -264,7 +268,9 @@ func TestSetUpdateExisting(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
 	encFile := filepath.Join(dir, ".env.enc")
-	krypt.Encrypt([]byte("MY_KEY=old\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("MY_KEY=old\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := execCmd(t, "set", "MY_KEY=updated", "--key", hexKey, "--file", encFile)
 	if err != nil {
@@ -281,7 +287,9 @@ func TestGetNotFoundCLI(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
 	encFile := filepath.Join(dir, ".env.enc")
-	krypt.Encrypt([]byte("OTHER=val\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("OTHER=val\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := execCmd(t, "get", "MISSING", "--key", hexKey, "--file", encFile)
 	if err == nil {
@@ -294,7 +302,9 @@ func TestSetInvalidFormat(t *testing.T) {
 
 	encFile := filepath.Join(dir, ".env.enc")
 	key, _ := hex.DecodeString(hexKey)
-	krypt.Encrypt([]byte("K=V\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("K=V\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := execCmd(t, "set", "NOEQUALS", "--key", hexKey, "--file", encFile)
 	if err == nil {
@@ -306,9 +316,10 @@ func TestSetGetWithEnvName(t *testing.T) {
 	key, hexKey, dir := testSetup(t)
 
 	encFile := filepath.Join(dir, ".env.dev.enc")
-	krypt.Encrypt([]byte("DEV_VAR=devval\n"), encFile, key)
+	if err := krypt.Encrypt([]byte("DEV_VAR=devval\n"), encFile, key); err != nil {
+		t.Fatal(err)
+	}
 
-	// Get with env name
 	stdout, _, err := execCmd(t, "get", "DEV_VAR", "dev", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("get with env: %v", err)
@@ -317,7 +328,6 @@ func TestSetGetWithEnvName(t *testing.T) {
 		t.Errorf("DEV_VAR = %q", strings.TrimSpace(stdout))
 	}
 
-	// Set with env name
 	_, _, err = execCmd(t, "set", "DEV_VAR=newdev", "dev", "--key", hexKey, "--file", encFile)
 	if err != nil {
 		t.Fatalf("set with env: %v", err)

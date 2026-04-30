@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const secretNew = "new"
+
 func testKey(t *testing.T) []byte {
 	t.Helper()
 	key := make([]byte, 32)
@@ -39,7 +41,7 @@ func TestEncryptDecryptFile(t *testing.T) {
 	}
 
 	// File should exist and not be plaintext
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // test reading our own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +99,9 @@ func TestAutoload(t *testing.T) {
 	path := testEncFile(t, key, "KRYPT_TEST_VAR=autoloaded\n")
 
 	t.Cleanup(func() {
-		os.Unsetenv("KRYPT_TEST_VAR")
+		if err := os.Unsetenv("KRYPT_TEST_VAR"); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
 	})
 
 	if err := Autoload(path, key); err != nil {
@@ -115,13 +119,13 @@ func TestSet(t *testing.T) {
 	path := testEncFile(t, key, "EXISTING=old\n")
 
 	// Update existing key
-	if err := Set(path, key, "EXISTING", "new"); err != nil {
+	if err := Set(path, key, "EXISTING", secretNew); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 
 	secrets, _ := Load(path, key)
-	if secrets["EXISTING"] != "new" {
-		t.Errorf("EXISTING = %q, want %q", secrets["EXISTING"], "new")
+	if secrets["EXISTING"] != secretNew {
+		t.Errorf("EXISTING = %q, want %q", secrets["EXISTING"], secretNew)
 	}
 
 	// Add new key
@@ -133,7 +137,7 @@ func TestSet(t *testing.T) {
 	if secrets["ADDED"] != "value" {
 		t.Errorf("ADDED = %q", secrets["ADDED"])
 	}
-	if secrets["EXISTING"] != "new" {
+	if secrets["EXISTING"] != secretNew {
 		t.Errorf("EXISTING lost after adding new key: %q", secrets["EXISTING"])
 	}
 }
@@ -169,8 +173,12 @@ func TestEncryptOverwritesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env.enc")
 
-	Encrypt([]byte("V1=old\n"), path, key)
-	Encrypt([]byte("V2=new\n"), path, key)
+	if err := Encrypt([]byte("V1=old\n"), path, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := Encrypt([]byte("V2=new\n"), path, key); err != nil {
+		t.Fatal(err)
+	}
 
 	secrets, _ := Load(path, key)
 	if _, ok := secrets["V1"]; ok {

@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/aschiavon91/krypt/pkg/krypt"
@@ -20,13 +20,10 @@ func newSetCmd() *cobra.Command {
 				env = args[1]
 			}
 
-			idx := strings.Index(kv, "=")
-			if idx < 0 {
-				return fmt.Errorf("invalid format: expected KEY=VALUE")
+			envKey, envValue, ok := strings.Cut(kv, "=")
+			if !ok {
+				return errors.New("invalid format: expected KEY=VALUE")
 			}
-
-			envKey := kv[:idx]
-			envValue := kv[idx+1:]
 
 			key, err := resolveKey(cmd, env)
 			if err != nil {

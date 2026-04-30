@@ -1,9 +1,11 @@
+// Package krypt provides AES-GCM encryption and decryption primitives.
 package krypt
 
 import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -40,13 +42,13 @@ func decrypt(ciphertext, key []byte) ([]byte, error) {
 
 	nonceSize := gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
+		return nil, errors.New("ciphertext too short")
 	}
 
 	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, sealed, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: invalid key or corrupted file")
+		return nil, errors.New("decryption failed: invalid key or corrupted file")
 	}
 
 	return plaintext, nil

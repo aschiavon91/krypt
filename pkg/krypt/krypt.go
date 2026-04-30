@@ -7,10 +7,8 @@ import (
 	"path/filepath"
 )
 
-var (
-	// ErrKeyNotFound is returned when a requested env key does not exist in the encrypted file.
-	ErrKeyNotFound = errors.New("key not found")
-)
+// ErrKeyNotFound is returned when a requested env key does not exist in the encrypted file.
+var ErrKeyNotFound = errors.New("key not found")
 
 // Load decrypts an .enc file and returns key-value pairs.
 func Load(path string, key []byte) (map[string]string, error) {
@@ -52,22 +50,22 @@ func Encrypt(plaintext []byte, path string, key []byte) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(ciphertext); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		tmp.Close()        //nolint:errcheck,gosec // already returning a write error, close error not actionable
+		os.Remove(tmpPath) //nolint:errcheck,gosec // best-effort cleanup
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		os.Remove(tmpPath) //nolint:errcheck,gosec // best-effort cleanup
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := os.Chmod(tmpPath, 0600); err != nil {
-		os.Remove(tmpPath)
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck,gosec // best-effort cleanup
 		return fmt.Errorf("set file permissions: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		os.Remove(tmpPath) //nolint:errcheck,gosec // best-effort cleanup
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 	return nil
@@ -75,7 +73,7 @@ func Encrypt(plaintext []byte, path string, key []byte) error {
 
 // Decrypt decrypts an .enc file and returns the plaintext bytes.
 func Decrypt(path string, key []byte) ([]byte, error) {
-	ciphertext, err := os.ReadFile(path)
+	ciphertext, err := os.ReadFile(path) //nolint:gosec // path is the encrypted file provided by the user, by design
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}

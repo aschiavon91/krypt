@@ -29,8 +29,8 @@ func newDecryptCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Fprint(cmd.OutOrStdout(), string(plaintext))
-			return nil
+			_, err = fmt.Fprint(cmd.OutOrStdout(), string(plaintext))
+			return err
 		},
 	}
 }

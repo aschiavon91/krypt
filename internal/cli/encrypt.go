@@ -25,7 +25,7 @@ func newEncryptCmd() *cobra.Command {
 			}
 
 			plainFile := resolvePlainFile(cmd, env)
-			plaintext, err := os.ReadFile(plainFile)
+			plaintext, err := os.ReadFile(plainFile) //nolint:gosec // path resolved from --source flag, user-controlled by design
 			if err != nil {
 				return fmt.Errorf("file not found: %s", plainFile)
 			}

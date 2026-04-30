@@ -108,7 +108,7 @@ func TestGenerateKey(t *testing.T) {
 
 	// Verify it's valid hex by checking characters
 	for _, c := range key {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Errorf("invalid hex char: %c", c)
 		}
 	}
