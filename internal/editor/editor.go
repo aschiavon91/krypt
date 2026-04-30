@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"syscall"
 )
 
 // Edit writes content to a secure temp file, opens $EDITOR, and returns the edited content.
@@ -16,9 +15,9 @@ func Edit(content []byte) ([]byte, error) {
 
 	// Set restrictive umask so the temp file is created 0600 from the start,
 	// eliminating the TOCTOU window between CreateTemp and Chmod.
-	oldUmask := syscall.Umask(0o177)
+	restoreUmask := applyUmask(0o177)
 	f, err := os.CreateTemp(dir, "krypt-*")
-	syscall.Umask(oldUmask)
+	restoreUmask()
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
